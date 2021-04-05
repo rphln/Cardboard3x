@@ -1,0 +1,47 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+from torch.utils.data import DataLoader
+
+from srnn import stats
+from srnn.dataset import PairsDataset
+from srnn.models.srcnn import SRCNN
+
+
+@torch.no_grad()
+def forward(device, state, dataset, batch_size):
+    model = SRCNN(channels=1).to(device)
+    criterion = torch.nn.MSELoss()
+
+    state = torch.load(state)
+    model.load_state_dict(state["model_state_dict"])
+
+    for (x, y) in DataLoader(PairsDataset(dataset), batch_size, shuffle=True):
+        y = y.to(device)
+        x = x.to(device)
+
+        z = model(x)
+
+        result = stats(None, "Forward", criterion, y, z)
+
+        print(f"Loss: {result['Loss']:.5f}")
+        print(f"PSNR: {result['PSNR']:.5f}")
+        print(f"SSIM: {result['SSIM']:.5f}")
+
+        return
+
+
+@click.command()
+@click.option("--device", default="cpu", type=torch.device)
+@click.option("--state", required=True, type=Path)
+@click.option("--dataset", required=True, type=Path)
+@click.option("--batch-size", default=32)
+def cli(device, state, dataset, batch_size):
+    return forward(device, state, dataset, batch_size)
+
+
+if __name__ == "__main__":
+    cli()
