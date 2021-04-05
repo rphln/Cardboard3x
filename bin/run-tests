@@ -19,11 +19,11 @@ def forward(device, state, dataset, batch_size):
     state = torch.load(state)
     model.load_state_dict(state["model_state_dict"])
 
-    for (x, y) in DataLoader(PairsDataset(dataset), batch_size, shuffle=True):
+    for (x, y) in DataLoader(PairsDataset(dataset), batch_size):
         y = y.to(device)
         x = x.to(device)
 
-        z = model(x)
+        z = model(x).clamp(0.0, 1.0)
 
         result = stats(None, "Forward", criterion, y, z)
 
