@@ -5,6 +5,7 @@ from pathlib import Path
 import click
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from srnn import stats
 from srnn.dataset import PairsDataset
@@ -19,19 +20,27 @@ def forward(device, state, dataset, batch_size):
     state = torch.load(state)
     model.load_state_dict(state["model_state_dict"])
 
-    for (x, y) in DataLoader(PairsDataset(dataset), batch_size):
+    loader = DataLoader(PairsDataset(dataset), batch_size)
+
+    loss = 0.0
+    psnr = 0.0
+    ssim = 0.0
+
+    for batch, (x, y) in enumerate(tqdm(loader), start=1):
         y = y.to(device)
         x = x.to(device)
 
         z = model(x).clamp(0.0, 1.0)
 
-        result = stats(None, "Forward", criterion, y, z)
+        results = stats(None, "Forward", criterion, y, z)
 
-        print(f"Loss: {result['Loss']:.5f}")
-        print(f"PSNR: {result['PSNR']:.5f}")
-        print(f"SSIM: {result['SSIM']:.5f}")
+        loss += (results["Loss"] - loss) / batch
+        psnr += (results["PSNR"] - psnr) / batch
+        ssim += (results["SSIM"] - ssim) / batch
 
-        return
+    print(f"Loss: {loss:.5f}")
+    print(f"PSNR: {psnr:.5f}")
+    print(f"SSIM: {ssim:.5f}")
 
 
 @click.command()
