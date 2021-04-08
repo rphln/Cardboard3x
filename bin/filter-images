@@ -3,17 +3,24 @@
 from json import loads
 from pathlib import Path
 from random import shuffle
+from shutil import copy
 
 import click
+from PIL import Image, UnidentifiedImageError
 from tqdm import tqdm
 
 SETS = {
-    "training": 2 ** 15,
-    "validation": 2 ** 11,
-    "tests": 2 ** 11,
-    "experiments-training": 2 ** 11,
-    "experiments-validation": 2 ** 7,
+    "testing": 5_000,
+    "training": 30_000,
 }
+
+
+def is_between(path: Path, lower: int, upper: int):
+    try:
+        with Image.open(path) as image:
+            return all(lower <= size <= upper for size in image.size)
+    except UnidentifiedImageError:
+        return False
 
 
 @click.command()
@@ -23,20 +30,25 @@ SETS = {
 def cli(metadata: Path, source: Path, target: Path):
     target.mkdir(exist_ok=True, parents=True)
 
-    metadata = metadata.glob("*")
-    source = source.glob("**/*.png")
-
     available = set()
 
-    for file in tqdm(metadata, desc="Loading metadata"):
+    for file in tqdm(metadata.glob("*"), desc="Loading metadata"):
         with open(file) as lines:
             for line in lines:
                 current = loads(line)
 
-                if current["rating"] == "s":
+                if (
+                    current["rating"] == "s"
+                    and 96 <= int(current["image_width"]) <= 1024
+                    and 96 <= int(current["image_height"]) <= 1024
+                ):
                     available.add(current["id"])
 
-    candidates = [file for file in source if file.stem in available]
+    candidates = [
+        file
+        for file in tqdm(list(source.glob("**/*")), desc="Filtering")
+        if file.stem in available and file.suffix in [".png", ".jpg", ".jpeg"]
+    ]
     shuffle(candidates)
 
     skip = 0
@@ -48,7 +60,7 @@ def cli(metadata: Path, source: Path, target: Path):
             source_: Path = candidate.resolve()
             target_: Path = subset / source_.name
 
-            target_.symlink_to(source_)
+            copy(source_, target_)
 
         skip += size
 

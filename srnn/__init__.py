@@ -1,131 +1,151 @@
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import torch
-from kornia.losses import psnr, ssim
+from sklearn.model_selection import KFold
+from torch.nn import Module
 from torch.optim import Adam
-from torch.utils.data import DataLoader
-from torchvision.utils import make_grid, save_image
-from tqdm import trange
-
-try:
-    from srnn.dataset import PairsDataset
-    from srnn.models.srcnn import SRCNN
-except ModuleNotFoundError:
-    # Safe to ignore on Colab.
-    pass
+from torch.optim.optimizer import Optimizer
+from torch.types import Device
+from torch.utils.data import DataLoader, SubsetRandomSampler
+from torch.utils.data.dataset import Dataset
+from torch.utils.tensorboard import SummaryWriter
+from tqdm.notebook import tqdm, trange
 
 
-def stats(epoch, type, criterion, y, z):
-    with torch.no_grad():
-        return {
-            "Epoch": epoch,
-            "Type": type,
-            "PSNR": psnr(y, z, max_val=1.0).mean().item(),
-            "SSIM": ssim(y, z, window_size=5).mean().item(),
-            "Loss": criterion(y, z).item(),
-        }
+class Model(Module):
+    @property
+    def name(self) -> str:
+        """
+        Returns a name to identify the model files.
+        """
+
+        raise NotImplementedError
+
+
+def setup_drive():
+    try:
+        from google.colab import drive
+
+        drive.mount("/content/drive/", force_remount=True)
+    except ModuleNotFoundError:
+        pass
 
 
 def train(
-    model,
-    criterion,
-    epochs,
-    batch_size,
-    save_interval,
-    device,
-    training_dataset,
-    validation_dataset,
-    checkpoint_folder,
-    checkpoint_name,
-    learning_rate,
-    resume,
+    model: Module,
+    criterion: Module,
+    device: Device,
+    optimizer: Optimizer,
+    loader: DataLoader,
+) -> float:
+    """
+    Runs a training epoch.
+    """
+
+    model.train()
+
+    epoch_mean_loss = 0
+
+    for batch, (x, y) in enumerate(
+        tqdm(loader, unit="batch", leave=False, desc="Training"), start=1
+    ):
+        optimizer.zero_grad()
+
+        x = x.to(device)
+        y = y.to(device)
+
+        loss = criterion(model(x), y)
+        epoch_mean_loss += (loss.item() - epoch_mean_loss) / batch
+
+        loss.backward()
+        optimizer.step()
+
+    return epoch_mean_loss
+
+
+@torch.no_grad()
+def validate(
+    model: Module, criterion: Module, device: Device, loader: DataLoader
+) -> float:
+    """
+    Validates the model.
+    """
+
+    model.eval()
+
+    epoch_mean_loss = 0
+
+    for batch, (x, y) in enumerate(
+        tqdm(loader, unit="batch", leave=False, desc="Validation"), start=1
+    ):
+        x = x.to(device)
+        y = y.to(device)
+
+        loss = criterion(model(x), y)
+        epoch_mean_loss += (loss.item() - epoch_mean_loss) / batch
+
+    return epoch_mean_loss
+
+
+def training(
+    model: Model,
+    parameters: Any,
+    criterion: Module,
+    epochs: int,
+    batch_size: int,
+    save_interval: int,
+    device: Device,
+    dataset: Dataset,
+    checkpoints: Path,
+    name: str,
+    learning_rate: float,
 ):
-    log_dir = checkpoint_folder / "logs"
-    log_dir.mkdir(exist_ok=True, parents=True)
+    checkpoints = checkpoints / datetime.now().isoformat()
+    checkpoints.mkdir(parents=True, exist_ok=True)
 
-    if isinstance(model, SRCNN):
-        params = [
-            {"params": model.conv_1.parameters()},
-            {"params": model.conv_2.parameters()},
-            {"params": model.conv_3.parameters(), "lr": learning_rate * 0.1},
-        ]
-    else:
-        params = model.parameters()
+    model = model.to(device)
+    optimizer = Adam(parameters, lr=learning_rate)
 
-    optimizer = Adam(params, lr=learning_rate)
+    folding = KFold(n_splits=5)
 
-    if resume:
-        checkpoint = torch.load(resume)
+    for fold, (training_indices, validation_indices) in enumerate(
+        folding.split(dataset)
+    ):
+        group = name.format(model=model.name, fold=fold, epoch=0)
+        writer = SummaryWriter(log_dir=(checkpoints / group).with_suffix(""))
 
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        training_loader = DataLoader(
+            dataset,
+            batch_size,
+            drop_last=True,
+            pin_memory=True,
+            sampler=SubsetRandomSampler(training_indices),
+        )
+        validation_loader = DataLoader(
+            dataset,
+            batch_size,
+            drop_last=True,
+            pin_memory=True,
+            sampler=SubsetRandomSampler(validation_indices),
+        )
 
-        start = checkpoint["epoch"]
-        history = checkpoint["history"]
-    else:
-        start = 0
-        history = []
+        for epoch in trange(0, epochs, unit="epoch", desc=f"Fold #{fold}"):
+            training_loss = train(model, criterion, device, optimizer, training_loader)
+            validation_loss = validate(model, criterion, device, validation_loader)
 
-    training_dataset = PairsDataset(training_dataset)
-    training_loader = DataLoader(
-        training_dataset,
-        batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
+            writer.add_scalar("Loss/Training", training_loss, epoch)
+            writer.add_scalar("Loss/Validation", validation_loss, epoch)
 
-    validation_dataset = PairsDataset(validation_dataset)
-    validation_loader = DataLoader(
-        validation_dataset,
-        batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
+            if epoch % save_interval == 0:
+                checkpoint = name.format(model=model.name, epoch=epoch, fold=fold)
 
-    with trange(1 + start, 1 + epochs, unit="epoch") as progress:
-        for epoch in progress:
-            should_save = epoch % save_interval == 0
-            name = checkpoint_name.format(model=model.__class__.__name__, epoch=epoch)
-
-            model.train()
-
-            for batch, (x, y) in enumerate(training_loader):
-                progress.set_description(f"Training batch {batch}")
-
-                optimizer.zero_grad()
-
-                y = y.to(device)
-                z = model(x.to(device))
-
-                loss = criterion(z, y)
-
-                loss.backward()
-                optimizer.step()
-
-                if batch == 0:
-                    history.append(stats(epoch, "Training", criterion, y, z))
-
-            with torch.no_grad():
-                for batch, (x, y) in enumerate(validation_loader):
-                    progress.set_description(f"Validating batch {batch}")
-
-                    y = y.to(device)
-                    z = model(x.to(device))
-
-                    if should_save and batch == 0:
-                        save_image(make_grid(y), (log_dir / name).with_suffix(".Y.png"))
-                        save_image(make_grid(z), (log_dir / name).with_suffix(".Ŷ.png"))
-
-                    history.append(stats(epoch, "Validation", criterion, y, z))
-
-            if should_save:
                 state = {
+                    "name": checkpoint,
                     "epoch": epoch,
-                    "history": history,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 }
 
-                torch.save(state, checkpoint_folder / name)
+                torch.save(state, checkpoints / checkpoint)
