@@ -23,7 +23,7 @@ def conv2d(in_channels, out_channels, kernel_size) -> Module:
 
 
 class SRCNN(Model):
-    N0 = 1
+    N0 = 3
     N1 = 64
     N2 = 32
 
@@ -80,8 +80,10 @@ from torchvision.utils import make_grid
 from srnn import Model, training
 from srnn.dataset import ImagePairsDataset, TensorPairsDataset
 
-dataset = TensorPairsDataset("/tmp/testing.h5")
-dataset = ImagePairsDataset(Path("/tmp/testing").glob("*"), lr_size=32, scale=3)
+
+dataset = ImagePairsDataset(
+    "/media/rphln/Taihou/Datasets/rphln-safebooru2020-small-cropped/training"
+)
 
 loader = DataLoader(dataset, batch_size=64, shuffle=True)
 lr, hr = next(iter(loader))

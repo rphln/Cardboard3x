@@ -1,10 +1,13 @@
 from functools import lru_cache
+from os import PathLike
 from pathlib import Path
+from random import choice
 from typing import Sequence, Tuple
 
 from PIL import Image
 from torch import Tensor
 from torch.utils.data import Dataset
+from torchvision.datasets.folder import default_loader
 from torchvision.transforms import RandomCrop
 from torchvision.transforms.functional import (
     InterpolationMode,
@@ -15,28 +18,16 @@ from torchvision.transforms.functional import (
 
 
 class ImagePairsDataset(Dataset):
-    def __init__(self, files: Sequence[Path], lr_size: int, scale: int):
-        self.files = list(files)
-        self.lr_size = lr_size
-
-        # This is a stateful transformation, and as such needs to be maintained
-        # across each access.
-        self.crop = RandomCrop(size=lr_size * scale)
-
-    @lru_cache(maxsize=None)
-    def __load_image(self, index):
-        return to_tensor(Image.open(self.files[index]).convert("YCbCr").getchannel("Y"))
+    def __init__(self, path: PathLike):
+        self.groups = [group for group in Path(path).glob("*") if group.is_dir()]
 
     def __getitem__(self, index: int) -> Tuple[Tensor, Tensor]:
-        # y = to_tensor(Image.open(self.files[index]).convert("YCbCr").getchannel("Y"))
-        y = self.__load_image(index)
+        files = list(self.groups[index].glob("*.hr"))
 
-        hr = self.crop(y)
-        lr = resize(
-            gaussian_blur(hr, kernel_size=3), self.lr_size, InterpolationMode.BICUBIC
-        )
+        hr: Path = choice(files)
+        lr: Path = hr.with_suffix(".lr")
 
-        return lr, hr
+        return to_tensor(default_loader(lr)), to_tensor(default_loader(hr))
 
     def __len__(self):
-        return len(self.files)
+        return len(self.groups)

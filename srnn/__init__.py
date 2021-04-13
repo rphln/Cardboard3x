@@ -11,7 +11,7 @@ from torch.types import Device
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from torch.utils.data.dataset import Dataset
 from torch.utils.tensorboard import SummaryWriter
-from tqdm.notebook import tqdm, trange
+from tqdm.auto import tqdm, trange
 
 
 class Model(Module):
