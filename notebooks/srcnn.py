@@ -117,5 +117,4 @@ training(
     checkpoints=Path("var/checkpoints"),
     name="{model}-{fold}-{epoch}.pth",
     learning_rate=LEARNING_RATE,
-    workers=True,
 )

@@ -1,6 +1,5 @@
 from datetime import datetime
 from math import inf
-from os import cpu_count
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +93,6 @@ def training(
     checkpoints: Path,
     name: str,
     learning_rate: float,
-    workers: bool,
 ):
     checkpoints = checkpoints / datetime.now().isoformat()
     checkpoints.mkdir(parents=True, exist_ok=True)
@@ -117,7 +115,6 @@ def training(
             batch_size,
             drop_last=True,
             pin_memory=True,
-            num_workers=cpu_count() if workers is None else workers,
             sampler=SubsetRandomSampler(training_indices),
         )
         validation_loader = DataLoader(
@@ -125,7 +122,6 @@ def training(
             batch_size,
             drop_last=True,
             pin_memory=True,
-            num_workers=cpu_count() if workers is None else workers,
             sampler=SubsetRandomSampler(validation_indices),
         )
 
