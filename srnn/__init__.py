@@ -1,7 +1,6 @@
-from datetime import datetime
 from math import inf
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import torch
 from sklearn.model_selection import KFold
@@ -93,8 +92,8 @@ def training(
     checkpoints: Path,
     name: str,
     learning_rate: float,
+    resume: Optional[Path] = None,
 ):
-    checkpoints = checkpoints / datetime.now().isoformat()
     checkpoints.mkdir(parents=True, exist_ok=True)
 
     model = model.to(device)
@@ -102,13 +101,26 @@ def training(
 
     folding = KFold(n_splits=5)
 
+    if resume:
+        checkpoint = torch.load(resume)
+
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        skip = checkpoint["fold"]
+        start = checkpoint["epoch"]
+    else:
+        skip = 0
+        start = 0
+
     for fold, (training_indices, validation_indices) in enumerate(
         folding.split(dataset)
     ):
-        best = inf
+        if fold < skip:
+            continue
 
-        group = name.format(model=model.name, fold=fold, epoch=0)
-        writer = SummaryWriter(log_dir=(checkpoints / group).with_suffix(""))
+        name = name.format(model=model.name, fold=fold)
+        writer = SummaryWriter(log_dir=(checkpoints / name).with_suffix(""))
 
         training_loader = DataLoader(
             dataset,
@@ -125,26 +137,22 @@ def training(
             sampler=SubsetRandomSampler(validation_indices),
         )
 
-        for epoch in trange(0, epochs, unit="epoch", desc=f"Fold #{fold}"):
+        best = inf
+
+        for epoch in trange(1 + start, 1 + epochs, unit="epoch", desc=f"Fold #{fold}"):
             training_loss = train(model, criterion, device, optimizer, training_loader)
             validation_loss = validate(model, criterion, device, validation_loader)
 
             writer.add_scalar("Loss/Training", training_loss, epoch)
             writer.add_scalar("Loss/Validation", validation_loss, epoch)
 
-            is_best = validation_loss < best
-            should_save = epoch % save_interval == 0
-
-            if is_best or should_save:
-                checkpoint = name.format(
-                    model=model.name, fold=fold, epoch=("best" if is_best else epoch)
-                )
-
+            if validation_loss < best:
                 state = {
-                    "name": checkpoint,
+                    "name": name,
                     "epoch": epoch,
+                    "fold": fold,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 }
 
-                torch.save(state, checkpoints / checkpoint)
+                torch.save(state, checkpoints / name)
