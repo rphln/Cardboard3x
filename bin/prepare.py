@@ -52,45 +52,47 @@ def process(source: Path, lr_size: int, hr_size: int) -> Tuple[Tensor, Tensor]:
 
 
 def convert(
-    source: List[Path], target: Path, lr_size: int, scale_factor: int, channels: int = 3
+    files: List[Path], output: Path, lr_size: int, scale_factor: int, channels: int = 3
 ):
-    with h5py.File(target, "w", libver="latest") as file:
+    with h5py.File(output, "w", libver="latest") as h5:
+        hr_size = lr_size * scale_factor
+
+        lr_dataset = h5.create_dataset(
+            "lr", shape=(len(files), channels, lr_size, lr_size)
+        )
+        hr_dataset = h5.create_dataset(
+            "hr", shape=(len(files), channels, hr_size, hr_size)
+        )
+
+        h5.attrs["paths"] = list(map(str, files))
+
         with Pool() as pool:
-            hr_size = lr_size * scale_factor
-
-            lr_dataset = file.create_dataset(
-                "lr", dtype="f", shape=(len(source), channels, lr_size, lr_size)
-            )
-            hr_dataset = file.create_dataset(
-                "hr", dtype="f", shape=(len(source), channels, hr_size, hr_size)
-            )
-
             process_ = partial(process, lr_size=lr_size, hr_size=hr_size)
 
             for idx, (lr, hr) in enumerate(
-                pool.imap_unordered(process_, tqdm(source, unit="file"))
+                pool.imap_unordered(process_, tqdm(files, unit="file"))
             ):
                 lr_dataset[idx] = lr.numpy()
                 hr_dataset[idx] = hr.numpy()
 
 
-def prepare(folder: Path, lr_size: int, scale_factor: int):
+def prepare(root: Path, lr_size: int, scale_factor: int):
     files = []
-    files += folder.glob("**/*.png")
-    files += folder.glob("**/*.jpg")
+    files += root.rglob("*.png")
+    files += root.rglob("*.jpg")
 
     train, test = train_test_split(files, test_size=0.2)
 
-    convert(test, folder.with_suffix(".test.h5"), lr_size, scale_factor)
-    convert(train, folder.with_suffix(".train.h5"), lr_size, scale_factor)
+    convert(test, root.with_suffix(".test.h5"), lr_size, scale_factor)
+    convert(train, root.with_suffix(".train.h5"), lr_size, scale_factor)
 
 
 @click.command()
-@click.option("--folder", required=True, type=Path)
+@click.option("--root", required=True, type=Path)
 @click.option("--lr-size", required=True, type=int)
 @click.option("--scale-factor", required=True, type=int)
-def cli(folder, lr_size, scale_factor):
-    return prepare(folder, lr_size, scale_factor)
+def cli(root: Path, lr_size: int, scale_factor: int):
+    return prepare(root, lr_size, scale_factor)
 
 
 if __name__ == "__main__":
