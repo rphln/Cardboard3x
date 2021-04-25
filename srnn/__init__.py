@@ -117,7 +117,7 @@ def training(
             batch_size,
             drop_last=True,
             pin_memory=True,
-            num_workers=cpu_count() if workers else 0,
+            num_workers=cpu_count() if workers is None else workers,
             sampler=SubsetRandomSampler(training_indices),
         )
         validation_loader = DataLoader(
@@ -125,7 +125,7 @@ def training(
             batch_size,
             drop_last=True,
             pin_memory=True,
-            num_workers=cpu_count() if workers else 0,
+            num_workers=cpu_count() if workers is None else workers,
             sampler=SubsetRandomSampler(validation_indices),
         )
 
