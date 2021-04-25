@@ -1,4 +1,6 @@
 from datetime import datetime
+from math import inf
+from os import cpu_count
 from pathlib import Path
 from typing import Any
 
@@ -22,15 +24,6 @@ class Model(Module):
         """
 
         raise NotImplementedError
-
-
-def setup_drive():
-    try:
-        from google.colab import drive
-
-        drive.mount("/content/drive/", force_remount=True)
-    except ModuleNotFoundError:
-        pass
 
 
 def train(
@@ -101,6 +94,7 @@ def training(
     checkpoints: Path,
     name: str,
     learning_rate: float,
+    workers: bool,
 ):
     checkpoints = checkpoints / datetime.now().isoformat()
     checkpoints.mkdir(parents=True, exist_ok=True)
@@ -113,6 +107,8 @@ def training(
     for fold, (training_indices, validation_indices) in enumerate(
         folding.split(dataset)
     ):
+        best = inf
+
         group = name.format(model=model.name, fold=fold, epoch=0)
         writer = SummaryWriter(log_dir=(checkpoints / group).with_suffix(""))
 
@@ -121,6 +117,7 @@ def training(
             batch_size,
             drop_last=True,
             pin_memory=True,
+            num_workers=cpu_count() if workers else 0,
             sampler=SubsetRandomSampler(training_indices),
         )
         validation_loader = DataLoader(
@@ -128,6 +125,7 @@ def training(
             batch_size,
             drop_last=True,
             pin_memory=True,
+            num_workers=cpu_count() if workers else 0,
             sampler=SubsetRandomSampler(validation_indices),
         )
 
@@ -138,8 +136,13 @@ def training(
             writer.add_scalar("Loss/Training", training_loss, epoch)
             writer.add_scalar("Loss/Validation", validation_loss, epoch)
 
-            if epoch % save_interval == 0:
-                checkpoint = name.format(model=model.name, epoch=epoch, fold=fold)
+            is_best = validation_loss < best
+            should_save = epoch % save_interval == 0
+
+            if is_best or should_save:
+                checkpoint = name.format(
+                    model=model.name, fold=fold, epoch=("best" if is_best else epoch)
+                )
 
                 state = {
                     "name": checkpoint,

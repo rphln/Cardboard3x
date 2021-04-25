@@ -1,66 +1,96 @@
 #!/usr/bin/env -S poetry run python
 
+from functools import partial
+from multiprocessing import Pool
 from pathlib import Path
+from typing import List, Tuple, Union
 
 import click
+import h5py
+from PIL import ImageFile
+from sklearn.model_selection import train_test_split
 from torch.functional import Tensor
 from torchvision.datasets.folder import default_loader
 from torchvision.transforms.functional import (
-    InterpolationMode,
+    center_crop,
     gaussian_blur,
     resize,
     to_tensor,
 )
-from torchvision.utils import save_image
 from tqdm import tqdm
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-def to_patches(image: Tensor, size: int) -> Tensor:
+
+def scale(image: Tensor, size: Union[int, Tuple[int, int]]) -> Tensor:
     """
-    Converts an image to a batch of non-overlapping tiles of the specified `size`.
+    Applies a single pyramid scale step to an image.
     """
 
-    # Splits a dimension in non-overlapping tiles of the specified size.
-    image = image.unfold(dimension=0, size=3, step=3)
-    image = image.unfold(dimension=1, size=size, step=size)
-    image = image.unfold(dimension=2, size=size, step=size)
-
-    # Turns the tiles in a batch.
-    return image.reshape(-1, 3, size, size)
+    return resize(gaussian_blur(image, kernel_size=3), size)
 
 
-def prepare(source: Path, target: Path, lr_size: int, scale_factor: int, glob: str):
-    hr_size = lr_size * scale_factor
+def pyramid(image: Tensor, target_size: int) -> Tensor:
+    _, height, width = image.shape
 
-    files = list(source.glob(glob))
+    half_width = width // 2
+    half_height = height // 2
 
-    for image in tqdm(files, unit="image"):
-        hr = to_patches(
-            to_tensor(default_loader(image)),
-            hr_size,
-        )
-        lr = resize(
-            gaussian_blur(hr, kernel_size=3),
-            lr_size,
-            InterpolationMode.BICUBIC,
-        )
+    if half_width < target_size or half_height < target_size:
+        return image
 
-        for idx, (x, y) in enumerate(zip(lr, hr)):
-            group = target / image.name
-            group.mkdir(exist_ok=True, parents=True)
+    return pyramid(scale(image, (half_height, half_width)), target_size)
 
-            save_image(x, group / f"{idx}.lr", format="png")
-            save_image(y, group / f"{idx}.hr", format="png")
+
+def process(source: Path, lr_size: int, hr_size: int) -> Tuple[Tensor, Tensor]:
+    image: Tensor = pyramid(to_tensor(default_loader(source)), hr_size)
+
+    hr = center_crop(image, hr_size)
+    lr = scale(hr, lr_size)
+
+    return lr, hr
+
+
+def convert(
+    source: List[Path], target: Path, lr_size: int, scale_factor: int, channels: int = 3
+):
+    with h5py.File(target, "w", libver="latest") as file:
+        with Pool() as pool:
+            hr_size = lr_size * scale_factor
+
+            lr_dataset = file.create_dataset(
+                "lr", dtype="f", shape=(len(source), channels, lr_size, lr_size)
+            )
+            hr_dataset = file.create_dataset(
+                "hr", dtype="f", shape=(len(source), channels, hr_size, hr_size)
+            )
+
+            process_ = partial(process, lr_size=lr_size, hr_size=hr_size)
+
+            for idx, (lr, hr) in enumerate(
+                pool.imap_unordered(process_, tqdm(source, unit="file"))
+            ):
+                lr_dataset[idx] = lr.numpy()
+                hr_dataset[idx] = hr.numpy()
+
+
+def prepare(folder: Path, lr_size: int, scale_factor: int):
+    files = []
+    files += folder.glob("**/*.png")
+    files += folder.glob("**/*.jpg")
+
+    train, test = train_test_split(files, test_size=0.2)
+
+    convert(test, folder.with_suffix(".test.h5"), lr_size, scale_factor)
+    convert(train, folder.with_suffix(".train.h5"), lr_size, scale_factor)
 
 
 @click.command()
-@click.option("--source", required=True, type=Path)
-@click.option("--target", required=True, type=Path)
+@click.option("--folder", required=True, type=Path)
 @click.option("--lr-size", required=True, type=int)
 @click.option("--scale-factor", required=True, type=int)
-@click.option("--glob", default="*.png")
-def cli(source, target, lr_size, scale_factor, glob):
-    return prepare(source, target, lr_size, scale_factor, glob)
+def cli(folder, lr_size, scale_factor):
+    return prepare(folder, lr_size, scale_factor)
 
 
 if __name__ == "__main__":

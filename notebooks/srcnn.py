@@ -78,12 +78,9 @@ from torchvision.transforms.functional import to_pil_image
 from torchvision.utils import make_grid
 
 from srnn import Model, training
-from srnn.dataset import ImagePairsDataset, TensorPairsDataset
+from srnn.dataset import TensorPairsDataset
 
-
-dataset = ImagePairsDataset(
-    "/media/rphln/Taihou/Datasets/rphln-safebooru2020-small-cropped/training"
-)
+dataset = TensorPairsDataset("var/rphln-safebooru2020-medium.train.h5")
 
 loader = DataLoader(dataset, batch_size=64, shuffle=True)
 lr, hr = next(iter(loader))
@@ -112,12 +109,13 @@ training(
     model,
     parameters,
     mse_loss,
-    epochs=30,
+    epochs=300,
     batch_size=256,
     save_interval=10,
     device="cuda:0",
     dataset=dataset,
     checkpoints=Path("var/checkpoints"),
-    name="{model}-{fold}.pth",
+    name="{model}-{fold}-{epoch}.pth",
     learning_rate=LEARNING_RATE,
+    workers=True,
 )
