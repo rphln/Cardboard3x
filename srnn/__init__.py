@@ -1,9 +1,10 @@
-from math import inf
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Tuple
 
 import torch
+from kornia.losses import psnr, ssim
 from sklearn.model_selection import KFold
+from torch import Tensor
 from torch.nn import Module
 from torch.optim import Adam
 from torch.optim.optimizer import Optimizer
@@ -14,14 +15,9 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm, trange
 
 
-class Model(Module):
-    @property
-    def name(self) -> str:
-        """
-        Returns a name to identify the model files.
-        """
-
-        raise NotImplementedError
+def reset_parameters(module):
+    if callable(getattr(module, "reset_parameters", None)):
+        module.reset_parameters()
 
 
 def train(
@@ -46,8 +42,9 @@ def train(
 
         x = x.to(device)
         y = y.to(device)
+        z = model(x)
 
-        loss = criterion(model(x), y)
+        loss = criterion(z, y)
         epoch_mean_loss += (loss.item() - epoch_mean_loss) / batch
 
         loss.backward()
@@ -56,32 +53,40 @@ def train(
     return epoch_mean_loss
 
 
+def mean_psnr(x: Tensor, y: Tensor) -> Tensor:
+    return psnr(x, y, max_val=1.0).mean()
+
+
+def mean_ssim(x: Tensor, y: Tensor) -> Tensor:
+    return ssim(x, y, window_size=3).mean()
+
+
 @torch.no_grad()
-def validate(
-    model: Module, criterion: Module, device: Device, loader: DataLoader
-) -> float:
+def validate(model: Module, device: Device, loader: DataLoader) -> Tuple[float, float]:
     """
     Validates the model.
     """
 
     model.eval()
 
-    epoch_mean_loss = 0
+    epoch_mean_psnr = 0
+    epoch_mean_ssim = 0
 
     for batch, (x, y) in enumerate(
         tqdm(loader, unit="batch", leave=False, desc="Validation"), start=1
     ):
         x = x.to(device)
         y = y.to(device)
+        z = model(x)
 
-        loss = criterion(model(x), y)
-        epoch_mean_loss += (loss.item() - epoch_mean_loss) / batch
+        epoch_mean_psnr += (mean_psnr(z, y).item() - epoch_mean_psnr) / batch
+        epoch_mean_ssim += (mean_ssim(z, y).item() - epoch_mean_ssim) / batch
 
-    return epoch_mean_loss
+    return epoch_mean_psnr, epoch_mean_ssim
 
 
 def training(
-    model: Model,
+    model: Module,
     parameters: Any,
     criterion: Module,
     epochs: int,
@@ -93,34 +98,37 @@ def training(
     name: str,
     learning_rate: float,
     resume: Optional[Path] = None,
+    init_parameters: Callable[[Module], None] = lambda _: None,
 ):
     checkpoints.mkdir(parents=True, exist_ok=True)
 
-    model = model.to(device)
-    optimizer = Adam(parameters, lr=learning_rate)
-
-    folding = KFold(n_splits=5)
-
-    if resume:
-        checkpoint = torch.load(resume)
-
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
-        skip = checkpoint["fold"]
-        start = checkpoint["epoch"]
-    else:
-        skip = 0
-        start = 0
-
     for fold, (training_indices, validation_indices) in enumerate(
-        folding.split(dataset)
+        KFold(n_splits=5).split(dataset)
     ):
+        model = model.to(device)
+
+        model.apply(reset_parameters)
+        model.apply(init_parameters)
+
+        optimizer = Adam(parameters, lr=learning_rate)
+
+        if resume:
+            checkpoint = torch.load(resume)
+
+            model.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+            skip = checkpoint["fold"]
+            start = checkpoint["epoch"]
+        else:
+            skip = 0
+            start = 0
+
         if fold < skip:
             continue
 
-        name = name.format(model=model.name, fold=fold)
-        writer = SummaryWriter(log_dir=(checkpoints / name).with_suffix(""))
+        name_ = name.format(model=model.__class__.__name__, epoch=epochs, fold=fold)
+        writer = SummaryWriter(log_dir=(checkpoints / name_).with_suffix(""))
 
         training_loader = DataLoader(
             dataset,
@@ -137,22 +145,25 @@ def training(
             sampler=SubsetRandomSampler(validation_indices),
         )
 
-        best = inf
-
         for epoch in trange(1 + start, 1 + epochs, unit="epoch", desc=f"Fold #{fold}"):
-            training_loss = train(model, criterion, device, optimizer, training_loader)
-            validation_loss = validate(model, criterion, device, validation_loader)
+            loss = train(model, criterion, device, optimizer, training_loader)
+            writer.add_scalar("Loss/Training", loss, epoch)
 
-            writer.add_scalar("Loss/Training", training_loss, epoch)
-            writer.add_scalar("Loss/Validation", validation_loss, epoch)
+            if epoch % save_interval == 0:
+                psnr_, ssim_ = validate(model, device, validation_loader)
 
-            if validation_loss < best:
+                writer.add_scalar("PSNR/Validation", psnr_, epoch)
+                writer.add_scalar("SSIM/Validation", ssim_, epoch)
+
                 state = {
-                    "name": name,
+                    "name": model.__class__.__name__,
                     "epoch": epoch,
                     "fold": fold,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                 }
 
-                torch.save(state, checkpoints / name)
+                name_ = name.format(
+                    model=model.__class__.__name__, epoch=epoch, fold=fold
+                )
+                torch.save(state, checkpoints / name_)

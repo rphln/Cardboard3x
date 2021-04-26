@@ -14,15 +14,20 @@
 
 from torch.nn import Conv2d, Module, init
 from torch.nn.functional import interpolate, mse_loss, relu
-
-from srnn import Model
+from torchvision.transforms.functional import normalize
 
 
 def conv2d(in_channels, out_channels, kernel_size) -> Module:
     return Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size // 2)
 
 
-class SRCNN(Model):
+def init_parameters(module):
+    if isinstance(module, Conv2d):
+        init.normal_(module.weight, std=1e-3)
+        init.constant_(module.bias, val=0e-0)
+
+
+class SRCNN(Module):
     N0 = 3
     N1 = 64
     N2 = 32
@@ -45,22 +50,14 @@ class SRCNN(Model):
         )
 
     def forward(self, x):
+        x = normalize(x, std=(0.2931, 0.2985, 0.2946), mean=(0.7026, 0.6407, 0.6265))
+
         x = interpolate(x, scale_factor=3, mode="bicubic", align_corners=False)
         x = relu(self.conv1(x), inplace=True)
         x = relu(self.conv2(x), inplace=True)
         x = self.conv3(x)
 
         return x
-
-    @property
-    def name(self) -> str:
-        return f"{self.__class__.__name__}_unclamped"
-
-
-def init_weights(module):
-    if isinstance(module, Conv2d):
-        init.normal_(module.weight, std=1e-3)
-        init.constant_(module.bias, val=0e-0)
 
 
 # %% [markdown]
@@ -77,7 +74,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms.functional import to_pil_image
 from torchvision.utils import make_grid
 
-from srnn import Model, training
+from srnn import training
 from srnn.dataset import TensorPairsDataset
 
 dataset = TensorPairsDataset("var/rphln-safebooru2020-medium.train.h5")
@@ -97,8 +94,6 @@ display(to_pil_image(make_grid(hr)))
 LEARNING_RATE = 1e-4
 
 model = SRCNN()
-model.apply(init_weights)
-
 parameters = [
     {"params": model.conv1.parameters()},
     {"params": model.conv2.parameters()},
@@ -106,15 +101,16 @@ parameters = [
 ]
 
 training(
-    model,
-    parameters,
-    mse_loss,
+    model=model,
+    parameters=parameters,
+    init_parameters=init_parameters,
+    criterion=mse_loss,
+    learning_rate=LEARNING_RATE,
     epochs=300,
     batch_size=256,
     save_interval=10,
     device="cuda:0",
     dataset=dataset,
     checkpoints=Path("var/checkpoints"),
-    name="{model}-{fold}-{epoch}.pth",
-    learning_rate=LEARNING_RATE,
+    name="{model}:{epoch}:{fold}.pth",
 )
