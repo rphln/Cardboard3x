@@ -21,6 +21,18 @@ def reset_parameters(module):
         module.reset_parameters()
 
 
+def mean_psnr(x: Tensor, y: Tensor) -> Tensor:
+    return psnr(x, y, max_val=1.0).mean()
+
+
+def mean_ssim(x: Tensor, y: Tensor) -> Tensor:
+    return ssim(x, y, window_size=3).mean()
+
+
+def to_name(base, model, epoch, fold):
+    return base.format(model=model.__class__.__name__, epoch=epoch, fold=fold)
+
+
 def train(
     model: Module,
     criterion: Module,
@@ -52,14 +64,6 @@ def train(
         optimizer.step()
 
     return epoch_mean_loss
-
-
-def mean_psnr(x: Tensor, y: Tensor) -> Tensor:
-    return psnr(x, y, max_val=1.0).mean()
-
-
-def mean_ssim(x: Tensor, y: Tensor) -> Tensor:
-    return ssim(x, y, window_size=3).mean()
 
 
 @torch.no_grad()
@@ -96,7 +100,7 @@ def training(
     device: Device,
     dataset: Dataset,
     checkpoints: Path,
-    name: str,
+    basename: str,
     learning_rate: float,
     resume: Optional[Path] = None,
     init_parameters: Callable[[Module], None] = lambda _: None,
@@ -130,8 +134,8 @@ def training(
         else:
             start = 0
 
-        name_ = name.format(model=model.__class__.__name__, epoch=epochs, fold=fold)
-        writer = SummaryWriter(log_dir=(checkpoints / name_).with_suffix(""))
+        log_dir = (checkpoints / to_name(basename, model, epochs, fold)).with_suffix("")
+        writer = SummaryWriter(log_dir=log_dir)
 
         training_loader = DataLoader(
             dataset,
@@ -150,13 +154,14 @@ def training(
 
         for epoch in trange(1 + start, 1 + epochs, unit="epoch", desc=f"Fold #{fold}"):
             loss = train(model, criterion, device, optimizer, training_loader)
-            writer.add_scalar("Loss/Training", loss, epoch)
 
             if epoch % save_interval == 0:
                 psnr_, ssim_ = validate(model, device, validation_loader)
 
                 writer.add_scalar("PSNR/Validation", psnr_, epoch)
                 writer.add_scalar("SSIM/Validation", ssim_, epoch)
+
+                writer.add_scalar("Loss/Training", loss, epoch)
 
                 state = {
                     "name": model.__class__.__name__,
@@ -166,7 +171,4 @@ def training(
                     "optimizer_state_dict": optimizer.state_dict(),
                 }
 
-                name_ = name.format(
-                    model=model.__class__.__name__, epoch=epoch, fold=fold
-                )
-                torch.save(state, checkpoints / name_)
+                torch.save(state, checkpoints / to_name(basename, model, epoch, fold))
