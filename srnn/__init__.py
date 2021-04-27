@@ -108,14 +108,14 @@ def training(
     checkpoints.mkdir(parents=True, exist_ok=True)
 
     if resume:
-        checkpoint: Optional[Dict] = torch.load(resume)
+        checkpoint: Dict = torch.load(resume)
     else:
-        checkpoint = None
+        checkpoint = {}
 
     folds = KFold(n_splits=5, shuffle=False).split(dataset)
 
     for fold, (training_indices, validation_indices) in islice(
-        enumerate(folds), checkpoint["fold"], None
+        enumerate(folds), checkpoint.get("fold", 0), None
     ):
         model = model.to(device)
 
@@ -130,7 +130,7 @@ def training(
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-            checkpoint = None
+            checkpoint = {}
         else:
             start = 0
 
