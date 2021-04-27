@@ -1,5 +1,6 @@
+from itertools import islice
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import torch
 from kornia.losses import psnr, ssim
@@ -102,8 +103,15 @@ def training(
 ):
     checkpoints.mkdir(parents=True, exist_ok=True)
 
-    for fold, (training_indices, validation_indices) in enumerate(
-        KFold(n_splits=5).split(dataset)
+    if resume:
+        checkpoint: Optional[Dict] = torch.load(resume)
+    else:
+        checkpoint = None
+
+    folds = KFold(n_splits=5, shuffle=False).split(dataset)
+
+    for fold, (training_indices, validation_indices) in islice(
+        enumerate(folds), checkpoint["fold"] + 1, None
     ):
         model = model.to(device)
 
@@ -112,20 +120,15 @@ def training(
 
         optimizer = Adam(parameters, lr=learning_rate)
 
-        if resume:
-            checkpoint = torch.load(resume)
+        if checkpoint:
+            start = checkpoint["epoch"]
 
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-            skip = checkpoint["fold"]
-            start = checkpoint["epoch"]
+            checkpoint = None
         else:
-            skip = 0
             start = 0
-
-        if fold < skip:
-            continue
 
         name_ = name.format(model=model.__class__.__name__, epoch=epochs, fold=fold)
         writer = SummaryWriter(log_dir=(checkpoints / name_).with_suffix(""))
