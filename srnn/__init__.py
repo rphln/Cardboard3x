@@ -111,7 +111,7 @@ def training(
     folds = KFold(n_splits=5, shuffle=False).split(dataset)
 
     for fold, (training_indices, validation_indices) in islice(
-        enumerate(folds), checkpoint["fold"] + 1, None
+        enumerate(folds), checkpoint["fold"], None
     ):
         model = model.to(device)
 
