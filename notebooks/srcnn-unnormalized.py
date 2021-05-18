@@ -69,8 +69,6 @@ class SRCNN(Module):
         )
 
     def forward(self, x):
-        x = normalize(x, std=(0.2931, 0.2985, 0.2946), mean=(0.7026, 0.6407, 0.6265))
-
         x = interpolate(x, scale_factor=3, mode="bicubic", align_corners=False)
         x = relu(self.conv1(x), inplace=True)
         x = relu(self.conv2(x), inplace=True)
@@ -134,5 +132,5 @@ training(
     dataset=dataset,
     checkpoints=Path("var/checkpoints/"),
     # resume=Path("var/checkpoints/SRCNN-L2-90-4.pth"),
-    basename="{model}-L2-{epoch}-{fold}.pth",
+    basename="{model}-Unnormalized-L2-{epoch}-{fold}.pth",
 )
