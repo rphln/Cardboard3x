@@ -19,6 +19,7 @@ kornia = "*"
 scikit-learn = "*"
 h5py = "*"
 matplotlib = "*"
+torch-summary = "^1.4.5"
 
 [tool.poetry.dev-dependencies]
 black = {version = "^20.8b1", allow-prereleases = true}
