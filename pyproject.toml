@@ -28,6 +28,8 @@ jupytext = "^1.11.1"
 torch-tb-profiler = "^0.1.0"
 ipykernel = "^5.5.3"
 ipywidgets = "^7.6.3"
+jupyter = "^1.0.0"
+autoflake = "^1.4"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

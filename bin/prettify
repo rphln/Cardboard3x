@@ -1,0 +1,7 @@
+#!/usr/bin/env -S poetry run bash
+
+set -euxo pipefail
+
+autoflake --recursive --in-place --remove-all-unused-imports --ignore-init-module-imports -- "${@}"
+isort -- "${@}"
+black -- "${@}"
