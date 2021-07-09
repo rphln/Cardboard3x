@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "srnn"
+name = "cardboard4"
 version = "0.1.0"
 description = ""
 authors = ["Raphael Nepomuceno <58113327+rphln@users.noreply.github.com>"]
