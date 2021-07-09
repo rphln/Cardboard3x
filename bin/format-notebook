@@ -1,8 +1,0 @@
-#!/usr/bin/env -S poetry run bash
-
-set -euxo pipefail
-
-jupytext --to py:percent \
-	--pipe 'autoflake --in-place --expand-star-imports --remove-all-unused-imports --ignore-init-module-imports {}' \
-	--pipe 'isort --profile black {}' \
-	--pipe black "${@}"
