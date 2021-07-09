@@ -1,8 +1,9 @@
-from os import PathLike, cpu_count
+from os import PathLike
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
 import h5py
+import torch
 from pytorch_lightning import LightningDataModule
 from sklearn.model_selection import train_test_split
 from torch import Tensor
@@ -12,21 +13,19 @@ IntoPath = Union[Path, PathLike, str]
 
 
 class TensorPairsDataset(Dataset[Tuple[Tensor, Tensor]]):
-    def __init__(self, path: IntoPath):
-        with h5py.File(path, "r", libver="latest", swmr=True) as h5:
-            self.len = len(h5["lr"])
-
-        self.path = path
+    def __init__(self, name):
+        with h5py.File(name, "r") as h5:
+            self.lr = torch.from_numpy(h5["lr"][:])
+            self.hr = torch.from_numpy(h5["hr"][:])
 
     def __getitem__(self, index: int):
-        with h5py.File(self.path, "r", libver="latest", swmr=True) as h5:
-            lr = h5["lr"][index]
-            hr = h5["hr"][index]
+        lr = self.lr[index]
+        hr = self.hr[index]
 
         return lr, hr
 
     def __len__(self):
-        return self.len
+        return len(self.lr)
 
 
 class TensorPairsDataModule(LightningDataModule):
@@ -74,7 +73,6 @@ class TensorPairsDataModule(LightningDataModule):
             self.batch_size,
             drop_last=True,
             pin_memory=True,
-            num_workers=cpu_count(),
         )
 
     def val_dataloader(self):
@@ -83,7 +81,6 @@ class TensorPairsDataModule(LightningDataModule):
             self.batch_size,
             drop_last=True,
             pin_memory=True,
-            num_workers=cpu_count(),
         )
 
     def test_dataloader(self):
@@ -92,5 +89,4 @@ class TensorPairsDataModule(LightningDataModule):
             self.batch_size,
             drop_last=True,
             pin_memory=True,
-            num_workers=cpu_count(),
         )
