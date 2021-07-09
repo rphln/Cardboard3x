@@ -15,8 +15,8 @@ IntoPath = Union[Path, PathLike, str]
 class TensorPairsDataset(Dataset[Tuple[Tensor, Tensor]]):
     def __init__(self, name):
         with h5py.File(name, "r") as h5:
-            self.lr = torch.as_tensor(h5["lr"][:])
-            self.hr = torch.as_tensor(h5["hr"][:])
+            self.lr = torch.from_numpy(h5["lr"][:])
+            self.hr = torch.from_numpy(h5["hr"][:])
 
     def __getitem__(self, index: int):
         lr = self.lr[index]
