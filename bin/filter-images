@@ -1,0 +1,41 @@
+#!/usr/bin/env -S poetry run python3
+
+from itertools import chain
+from json import loads
+from pathlib import Path
+
+import click
+from tqdm import tqdm
+
+
+@click.command()
+@click.option("--catalog", required=True, type=Path)
+@click.option("--source", required=True, type=Path)
+@click.option("--target", required=True, type=Path)
+def cli(catalog: Path, source: Path, target: Path):
+    available = {
+        path.stem: path for path in map(lambda p: Path(p.strip()), open(catalog, "r"))
+    }
+
+    with open(target, "a+") as listing:
+        lines = chain.from_iterable(open(file, "r") for file in source.glob("*"))
+
+        for line in tqdm(lines, desc="Loading metadata"):
+            current = loads(line)
+
+            # The file extension in the metadata doesn’t always match the file
+            # path, thus we need to do a lookup on the available file list.
+            path = available.get(current["id"])
+
+            if (
+                path is not None
+                and current["rating"] in {"s"}
+                and current["file_ext"] in {"png"}
+                and 128 <= int(current["image_width"]) <= 1024
+                and 128 <= int(current["image_height"]) <= 1024
+            ):
+                print(path, file=listing)
+
+
+if __name__ == "__main__":
+    cli()

@@ -3,7 +3,7 @@
 from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Tuple
 
 import click
 import h5py
@@ -12,6 +12,7 @@ from sklearn.model_selection import train_test_split
 from torch.functional import Tensor
 from torchvision.datasets.folder import default_loader
 from torchvision.transforms.functional import (
+    InterpolationMode,
     center_crop,
     gaussian_blur,
     resize,
@@ -22,31 +23,16 @@ from tqdm import tqdm
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
-def scale(image: Tensor, size: Union[int, Tuple[int, int]]) -> Tensor:
-    """
-    Applies a single pyramid scale step to an image.
-    """
-
-    return resize(gaussian_blur(image, kernel_size=3), size)
-
-
-def pyramid(image: Tensor, target_size: int) -> Tensor:
-    _, height, width = image.shape
-
-    half_width = width // 2
-    half_height = height // 2
-
-    if half_width < target_size or half_height < target_size:
-        return image
-
-    return pyramid(scale(image, (half_height, half_width)), target_size)
-
-
 def process(source: Path, lr_size: int, hr_size: int) -> Tuple[Tensor, Tensor]:
-    image: Tensor = pyramid(to_tensor(default_loader(source)), hr_size)
+    image: Tensor = to_tensor(default_loader(source))
 
     hr = center_crop(image, hr_size)
-    lr = scale(hr, lr_size)
+    lr = resize(
+        # Sigma taken from “Perceptual Losses for Real-Time Style Transfer and Super-Resolution”.
+        gaussian_blur(hr, kernel_size=9, sigma=1.0),
+        lr_size,
+        interpolation=InterpolationMode.BICUBIC,
+    )
 
     return lr, hr
 
@@ -81,10 +67,10 @@ def prepare(root: Path, lr_size: int, scale_factor: int):
     files += root.rglob("*.png")
     files += root.rglob("*.jpg")
 
-    train, test = train_test_split(files, test_size=0.2)
+    # train, test = train_test_split(files, test_size=0.2)
 
-    convert(test, root.with_suffix(".test.h5"), lr_size, scale_factor)
-    convert(train, root.with_suffix(".train.h5"), lr_size, scale_factor)
+    convert(files, root.with_suffix(".test.h5"), lr_size, scale_factor)
+    # convert(train, root.with_suffix(".train.h5"), lr_size, scale_factor)
 
 
 @click.command()
