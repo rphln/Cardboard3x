@@ -2,11 +2,12 @@
 
 from functools import partial
 from multiprocessing import Pool
+from os import cpu_count
 from pathlib import Path
 from typing import List, Tuple
 
 import click
-import h5py
+import numpy as np
 from PIL import ImageFile
 from sklearn.model_selection import train_test_split
 from torch.functional import Tensor
@@ -27,58 +28,63 @@ def process(source: Path, lr_size: int, hr_size: int) -> Tuple[Tensor, Tensor]:
     image: Tensor = to_tensor(default_loader(source))
 
     hr = center_crop(image, hr_size)
-    lr = resize(
-        # Sigma taken from “Perceptual Losses for Real-Time Style Transfer and Super-Resolution”.
-        gaussian_blur(hr, kernel_size=9, sigma=1.0),
-        lr_size,
-        interpolation=InterpolationMode.BICUBIC,
-    )
+
+    # Sigma taken from “Perceptual Losses for Real-Time Style Transfer and Super-Resolution”.
+    lr = gaussian_blur(hr, kernel_size=9, sigma=1.0)
+    lr = resize(lr, lr_size, interpolation=InterpolationMode.BICUBIC)
+
+    lr = lr.numpy().astype(dtype=np.float16)
+    hr = hr.numpy().astype(dtype=np.float16)
 
     return lr, hr
 
 
 def convert(
-    files: List[Path], output: Path, lr_size: int, scale_factor: int, channels: int = 3
+    files: List[Path],
+    directory: Path,
+    lr_size: int,
+    scale_factor: int,
+    channels: int,
+    jobs: int,
 ):
-    with h5py.File(output, "w", libver="latest") as h5:
-        hr_size = lr_size * scale_factor
+    hr_size = lr_size * scale_factor
 
-        lr_dataset = h5.create_dataset(
-            "lr", shape=(len(files), channels, lr_size, lr_size)
-        )
-        hr_dataset = h5.create_dataset(
-            "hr", shape=(len(files), channels, hr_size, hr_size)
-        )
+    lr_batch = np.empty((len(files), channels, lr_size, lr_size), dtype=np.float16)
+    hr_batch = np.empty((len(files), channels, hr_size, hr_size), dtype=np.float16)
 
-        h5.attrs["paths"] = list(map(str, files))
+    with Pool(jobs) as pool, tqdm(files, unit="file") as files_:
+        process_ = partial(process, lr_size=lr_size, hr_size=hr_size)
 
-        with Pool() as pool:
-            process_ = partial(process, lr_size=lr_size, hr_size=hr_size)
+        for index, (lr_sample, hr_sample) in enumerate(
+            pool.imap_unordered(process_, files_)
+        ):
+            lr_batch[index] = lr_sample
+            hr_batch[index] = hr_sample
 
-            for idx, (lr, hr) in enumerate(
-                pool.imap_unordered(process_, tqdm(files, unit="file"))
-            ):
-                lr_dataset[idx] = lr.numpy()
-                hr_dataset[idx] = hr.numpy()
+    directory.mkdir(exist_ok=True, parents=True)
+
+    np.save(directory / "lr.npy", lr_batch)
+    np.save(directory / "hr.npy", hr_batch)
 
 
-def prepare(root: Path, lr_size: int, scale_factor: int):
+def prepare(root: Path, lr_size: int, scale_factor: int, jobs: int):
     files = []
     files += root.rglob("*.png")
     files += root.rglob("*.jpg")
 
-    # train, test = train_test_split(files, test_size=0.2)
+    train, test = train_test_split(files, test_size=0.2)
 
-    convert(files, root.with_suffix(".test.h5"), lr_size, scale_factor)
-    # convert(train, root.with_suffix(".train.h5"), lr_size, scale_factor)
+    convert(test, root.with_suffix(".test"), lr_size, scale_factor, 3, jobs)
+    convert(train, root.with_suffix(".train"), lr_size, scale_factor, 3, jobs)
 
 
 @click.command()
 @click.option("--root", required=True, type=Path)
 @click.option("--lr-size", required=True, type=int)
 @click.option("--scale-factor", required=True, type=int)
-def cli(root: Path, lr_size: int, scale_factor: int):
-    return prepare(root, lr_size, scale_factor)
+@click.option("--jobs", required=True, type=int, default=cpu_count())
+def cli(root: Path, lr_size: int, scale_factor: int, jobs: int):
+    return prepare(root, lr_size, scale_factor, jobs)
 
 
 if __name__ == "__main__":

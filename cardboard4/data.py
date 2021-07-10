@@ -2,7 +2,7 @@ from os import PathLike
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
-import h5py
+import numpy as np
 import torch
 from pytorch_lightning import LightningDataModule
 from sklearn.model_selection import train_test_split
@@ -14,11 +14,10 @@ IntoPath = Union[Path, PathLike, str]
 
 class TensorPairsDataset(Dataset[Tuple[Tensor, Tensor]]):
     def __init__(self, name):
-        with h5py.File(name, "r") as h5:
-            self.lr = torch.from_numpy(h5["lr"][:])
-            self.hr = torch.from_numpy(h5["hr"][:])
+        self.lr = torch.from_numpy(np.load(name.with_suffix(".lr.npy"), mmap_mode="c"))
+        self.hr = torch.from_numpy(np.load(name.with_suffix(".hr.npy"), mmap_mode="c"))
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> (Tensor, Tensor):
         lr = self.lr[index]
         hr = self.hr[index]
 
