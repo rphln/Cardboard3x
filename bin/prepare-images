@@ -24,7 +24,7 @@ from tqdm import tqdm
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
-def process(source: Path, lr_size: int, hr_size: int) -> Tuple[Tensor, Tensor]:
+def process(source: Path, lr_size: int, hr_size: int) -> Tuple[np.array, np.array]:
     image: Tensor = to_tensor(default_loader(source))
 
     hr = center_crop(image, hr_size)
@@ -33,15 +33,15 @@ def process(source: Path, lr_size: int, hr_size: int) -> Tuple[Tensor, Tensor]:
     lr = gaussian_blur(hr, kernel_size=9, sigma=1.0)
     lr = resize(lr, lr_size, interpolation=InterpolationMode.BICUBIC)
 
-    lr = lr.numpy().astype(dtype=np.float16)
-    hr = hr.numpy().astype(dtype=np.float16)
+    lr = lr.numpy()
+    hr = hr.numpy()
 
     return lr, hr
 
 
 def convert(
     files: List[Path],
-    directory: Path,
+    target: Path,
     lr_size: int,
     scale_factor: int,
     channels: int,
@@ -49,8 +49,8 @@ def convert(
 ):
     hr_size = lr_size * scale_factor
 
-    lr_batch = np.empty((len(files), channels, lr_size, lr_size), dtype=np.float16)
-    hr_batch = np.empty((len(files), channels, hr_size, hr_size), dtype=np.float16)
+    lr_batch = np.empty((len(files), channels, lr_size, lr_size), dtype=np.float32)
+    hr_batch = np.empty((len(files), channels, hr_size, hr_size), dtype=np.float32)
 
     with Pool(jobs) as pool, tqdm(files, unit="file") as files_:
         process_ = partial(process, lr_size=lr_size, hr_size=hr_size)
@@ -61,21 +61,21 @@ def convert(
             lr_batch[index] = lr_sample
             hr_batch[index] = hr_sample
 
-    directory.mkdir(exist_ok=True, parents=True)
-
-    np.save(directory / "lr.npy", lr_batch)
-    np.save(directory / "hr.npy", hr_batch)
+    np.save(target.with_suffix(".lr.npy"), lr_batch)
+    np.save(target.with_suffix(".hr.npy"), hr_batch)
 
 
 def prepare(root: Path, lr_size: int, scale_factor: int, jobs: int):
+    root.mkdir(exist_ok=True, parents=True)
+
     files = []
     files += root.rglob("*.png")
     files += root.rglob("*.jpg")
 
     train, test = train_test_split(files, test_size=0.2)
 
-    convert(test, root.with_suffix(".test"), lr_size, scale_factor, 3, jobs)
-    convert(train, root.with_suffix(".train"), lr_size, scale_factor, 3, jobs)
+    convert(test, root / "test", lr_size, scale_factor, 3, jobs)
+    convert(train, root / "train", lr_size, scale_factor, 3, jobs)
 
 
 @click.command()
