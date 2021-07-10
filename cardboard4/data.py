@@ -1,13 +1,13 @@
 from os import PathLike
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from pytorch_lightning import LightningDataModule
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
 
 IntoPath = Union[Path, PathLike, str]
 
@@ -34,17 +34,16 @@ class TensorPairsDataModule(LightningDataModule):
     batch_size: int
 
     training: TensorPairsDataset
-    validation: TensorPairsDataset
     testing: TensorPairsDataset
 
-    validation_ratio: float = 0.2
+    training_indices: Any
+    validation_indices: Any
 
     def __init__(
         self,
         train_with: IntoPath,
         test_with: IntoPath,
         batch_size: int,
-        validation_ratio: float = validation_ratio,
     ):
         super().__init__()
 
@@ -53,14 +52,13 @@ class TensorPairsDataModule(LightningDataModule):
         self.test_with = test_with
         self.train_with = train_with
 
-        self.validation_ratio = validation_ratio
-
     def setup(self, stage: Optional[str] = None):
         if stage in (None, "fit"):
-            self.training, self.validation = train_test_split(
-                TensorPairsDataset(self.train_with),
-                test_size=self.validation_ratio,
-                shuffle=False,
+            self.training = TensorPairsDataset(self.train_with)
+
+            # Splits are fully deterministic across everything.
+            self.training_indices, self.validation_indices = next(
+                KFold(n_splits=5, shuffle=False).split(self.training)
             )
 
         if stage in (None, "test"):
@@ -72,14 +70,16 @@ class TensorPairsDataModule(LightningDataModule):
             self.batch_size,
             drop_last=True,
             pin_memory=True,
+            sampler=SubsetRandomSampler(self.training_indices),
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.validation,
+            self.training,
             self.batch_size,
             drop_last=True,
             pin_memory=True,
+            sampler=SubsetRandomSampler(self.validation_indices),
         )
 
     def test_dataloader(self):
