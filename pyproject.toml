@@ -16,6 +16,7 @@ scikit-learn = ">=0.24"
 torch = ">=1.9"
 torchvision = ">=0.10"
 wandb = ">=0.10"
+pytorch-ignite = "^0.4.5"
 
 [tool.poetry.dev-dependencies]
 autoflake = {version = "^1.4", allow-prereleases = true}
