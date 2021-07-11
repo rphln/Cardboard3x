@@ -2,8 +2,8 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, Optional, Tuple, Union
 
-import numpy as np
 import torch
+from numpy.lib.format import open_memmap
 from pytorch_lightning import LightningDataModule
 from sklearn.model_selection import KFold
 from torch import Tensor
@@ -13,9 +13,12 @@ IntoPath = Union[Path, PathLike, str]
 
 
 class TensorPairsDataset(Dataset[Tuple[Tensor, Tensor]]):
-    def __init__(self, name):
-        self.lr = torch.from_numpy(np.load(name.with_suffix(".lr.npy"), mmap_mode="c"))
-        self.hr = torch.from_numpy(np.load(name.with_suffix(".hr.npy"), mmap_mode="c"))
+    def __init__(self, path: Path):
+        lr = path.with_suffix(".lr.npy")
+        hr = path.with_suffix(".hr.npy")
+
+        self.lr = torch.from_numpy(open_memmap(lr, mode="c"))
+        self.hr = torch.from_numpy(open_memmap(hr, mode="c"))
 
     def __getitem__(self, index: int) -> (Tensor, Tensor):
         lr = self.lr[index]
