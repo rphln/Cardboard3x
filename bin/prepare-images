@@ -8,6 +8,7 @@ from typing import List, Tuple
 
 import click
 import numpy as np
+from numpy.lib.format import open_memmap
 from PIL import ImageFile
 from sklearn.model_selection import train_test_split
 from torch.functional import Tensor
@@ -49,8 +50,11 @@ def convert(
 ):
     hr_size = lr_size * scale_factor
 
-    lr_batch = np.empty((len(files), channels, lr_size, lr_size), dtype=np.float32)
-    hr_batch = np.empty((len(files), channels, hr_size, hr_size), dtype=np.float32)
+    lr = target.with_suffix(".lr.npy")
+    hr = target.with_suffix(".hr.npy")
+
+    lr = open_memmap(lr, "w+", np.float32, (len(files), channels, lr_size, lr_size))
+    hr = open_memmap(hr, "w+", np.float32, (len(files), channels, hr_size, hr_size))
 
     with Pool(jobs) as pool, tqdm(files, unit="file") as files_:
         process_ = partial(process, lr_size=lr_size, hr_size=hr_size)
@@ -58,33 +62,31 @@ def convert(
         for index, (lr_sample, hr_sample) in enumerate(
             pool.imap_unordered(process_, files_)
         ):
-            lr_batch[index] = lr_sample
-            hr_batch[index] = hr_sample
-
-    np.save(target.with_suffix(".lr.npy"), lr_batch)
-    np.save(target.with_suffix(".hr.npy"), hr_batch)
+            lr[index] = lr_sample
+            hr[index] = hr_sample
 
 
-def prepare(root: Path, lr_size: int, scale_factor: int, jobs: int):
-    root.mkdir(exist_ok=True, parents=True)
+def prepare(source: Path, target: Path, lr_size: int, scale_factor: int, jobs: int):
+    target.mkdir(exist_ok=True, parents=True)
 
     files = []
-    files += root.rglob("*.png")
-    files += root.rglob("*.jpg")
+    files += source.rglob("*.png")
+    files += source.rglob("*.jpg")
 
     train, test = train_test_split(files, test_size=0.2)
 
-    convert(test, root / "test", lr_size, scale_factor, 3, jobs)
-    convert(train, root / "train", lr_size, scale_factor, 3, jobs)
+    convert(test, target / "test", lr_size, scale_factor, 3, jobs)
+    convert(train, target / "train", lr_size, scale_factor, 3, jobs)
 
 
 @click.command()
-@click.option("--root", required=True, type=Path)
+@click.option("--source", required=True, type=Path)
+@click.option("--target", required=True, type=Path)
 @click.option("--lr-size", required=True, type=int)
 @click.option("--scale-factor", required=True, type=int)
 @click.option("--jobs", required=True, type=int, default=cpu_count())
-def cli(root: Path, lr_size: int, scale_factor: int, jobs: int):
-    return prepare(root, lr_size, scale_factor, jobs)
+def cli(source: Path, target: Path, lr_size: int, scale_factor: int, jobs: int):
+    return prepare(source, target, lr_size, scale_factor, jobs)
 
 
 if __name__ == "__main__":
