@@ -1,0 +1,34 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+from torch.nn import Upsample
+from torchvision.datasets.folder import default_loader
+from torchvision.transforms.functional import to_tensor
+from torchvision.utils import save_image
+
+
+@torch.no_grad()
+def upscale(device, model, source, target):
+    model = model.to(device)
+    model.eval()
+
+    lr = to_tensor(default_loader(source)).unsqueeze_(0)
+    hr = model(lr.to(device)).clamp(0.0, 1.0)
+
+    save_image(hr, target, format="png")
+
+
+@click.command()
+@click.option("--device", default="cpu", type=torch.device)
+@click.argument("source", type=Path)
+@click.argument("target", type=Path)
+def cli(device, source, target):
+    model = Upsample(scale_factor=3, mode="bicubic", align_corners=False).to(device)
+    return upscale(device, model, source, target)
+
+
+if __name__ == "__main__":
+    cli()

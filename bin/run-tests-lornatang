@@ -1,0 +1,86 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+import torch.nn as nn
+from kornia.color import rgb_to_ycbcr, ycbcr_to_rgb
+from torch.cuda import amp
+from torch.nn.functional import interpolate
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
+from cardboard4 import TensorPairsDataset, mean_psnr, mean_ssim
+
+
+class ESPCN(nn.Module):
+    def __init__(self, scale_factor):
+        super(ESPCN, self).__init__()
+
+        # Feature mapping
+        self.feature_maps = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=5, stride=1, padding=2),
+            nn.Tanh(),
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.Tanh(),
+        )
+
+        # Sub-pixel convolution layer
+        self.sub_pixel = nn.Sequential(
+            nn.Conv2d(32, 1 * (scale_factor ** 2), kernel_size=3, stride=1, padding=1),
+            nn.PixelShuffle(scale_factor),
+            nn.Sigmoid(),
+        )
+
+    @amp.autocast()
+    def forward(self, inputs):
+        out = self.feature_maps(inputs)
+        out = self.sub_pixel(out)
+        return out
+
+
+@torch.no_grad()
+def forward(model, device, dataset, batch_size):
+    loader = DataLoader(dataset, batch_size, drop_last=True, shuffle=False)
+
+    model.eval()
+
+    epoch_mean_psnr = 0.0
+    epoch_mean_ssim = 0.0
+
+    for batch, (x, y) in enumerate(tqdm(loader), start=1):
+        x = x.to(device)
+        y = y.to(device)
+
+        x = rgb_to_ycbcr(x)
+
+        z = interpolate(x, scale_factor=3, mode="bicubic", align_corners=False)
+        z[:, :1, :, :] = model(x[:, :1, :, :])
+        z = z.clamp(0.0, 1.0)
+
+        z = ycbcr_to_rgb(z)
+
+        epoch_mean_psnr += (mean_psnr(z, y).item() - epoch_mean_psnr) / batch
+        epoch_mean_ssim += (mean_ssim(z, y).item() - epoch_mean_ssim) / batch
+
+    return epoch_mean_psnr, epoch_mean_ssim
+
+
+@click.command()
+@click.option("--device", default="cuda:0", type=torch.device)
+@click.option("--models", required=True, type=Path)
+@click.option("--dataset", required=True, type=Path)
+@click.option("--batch-size", default=32)
+def cli(device, models, dataset, batch_size):
+    state = torch.load(models)
+
+    model = ESPCN(3).to(device)
+    model.load_state_dict(state)
+
+    psnr, ssim = forward(model, device, TensorPairsDataset(dataset), batch_size)
+    print(dataset, models, f"{psnr:.2f} {ssim:.4f}")
+
+
+if __name__ == "__main__":
+    cli()

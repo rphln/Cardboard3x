@@ -1,0 +1,46 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+from torch.nn import Upsample
+from torch.utils.data import DataLoader
+
+from cardboard4 import TensorPairsDataset, mean_psnr, mean_ssim
+
+
+@torch.no_grad()
+def forward(model, device, dataset, batch_size):
+    loader = DataLoader(dataset, batch_size, drop_last=True, shuffle=False)
+
+    model.eval()
+
+    epoch_mean_psnr = 0.0
+    epoch_mean_ssim = 0.0
+
+    for batch, (x, y) in enumerate(loader, start=1):
+        x = x.to(device)
+        y = y.to(device)
+
+        z = model(x).clamp(0.0, 1.0)
+
+        epoch_mean_psnr += (mean_psnr(z, y).item() - epoch_mean_psnr) / batch
+        epoch_mean_ssim += (mean_ssim(z, y).item() - epoch_mean_ssim) / batch
+
+    return epoch_mean_psnr, epoch_mean_ssim
+
+
+@click.command()
+@click.option("--device", default="cuda:0", type=torch.device)
+@click.option("--models", required=True, type=str)
+@click.option("--dataset", required=True, type=Path)
+@click.option("--batch-size", default=32)
+def cli(device, models, dataset, batch_size):
+    model = Upsample(scale_factor=3, mode=models, align_corners=False).to(device)
+    psnr, ssim = forward(model, device, TensorPairsDataset(dataset), batch_size)
+    print(dataset, models, f"{psnr:.2f} {ssim:.4f}")
+
+
+if __name__ == "__main__":
+    cli()

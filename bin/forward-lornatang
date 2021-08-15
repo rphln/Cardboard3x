@@ -1,0 +1,74 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+import torch.nn as nn
+from kornia.color import rgb_to_ycbcr, ycbcr_to_rgb
+from torch.cuda import amp
+from torch.nn.functional import interpolate
+from torchvision.datasets.folder import default_loader
+from torchvision.transforms.functional import to_tensor
+from torchvision.utils import save_image
+
+
+class ESPCN(nn.Module):
+    def __init__(self, scale_factor):
+        super(ESPCN, self).__init__()
+
+        # Feature mapping
+        self.feature_maps = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=5, stride=1, padding=2),
+            nn.Tanh(),
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.Tanh(),
+        )
+
+        # Sub-pixel convolution layer
+        self.sub_pixel = nn.Sequential(
+            nn.Conv2d(32, 1 * (scale_factor ** 2), kernel_size=3, stride=1, padding=1),
+            nn.PixelShuffle(scale_factor),
+            nn.Sigmoid(),
+        )
+
+    @amp.autocast()
+    def forward(self, inputs):
+        out = self.feature_maps(inputs)
+        out = self.sub_pixel(out)
+        return out
+
+
+@torch.no_grad()
+def upscale(device, model, source, target):
+    model = model.to(device)
+    model.eval()
+
+    lr = to_tensor(default_loader(source)).unsqueeze_(0)
+
+    lr = rgb_to_ycbcr(lr)
+
+    hr = interpolate(lr, scale_factor=3, mode="bicubic", align_corners=False)
+    hr[:, :1, :, :] = model(lr[:, :1, :, :])
+
+    hr = ycbcr_to_rgb(hr.clamp(0.0, 1.0))
+
+    save_image(hr, target, format="png")
+
+
+@click.command()
+@click.option("--device", default="cpu", type=torch.device)
+@click.option("--state", required=True, type=Path)
+@click.argument("source", type=Path)
+@click.argument("target", type=Path)
+def cli(device, state, source, target):
+    state = torch.load(state)
+
+    model = ESPCN(3)
+    model.load_state_dict(state)
+
+    return upscale(device, model, source, target)
+
+
+if __name__ == "__main__":
+    cli()
