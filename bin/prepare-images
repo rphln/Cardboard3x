@@ -66,27 +66,31 @@ def convert(
             hr[index] = hr_sample
 
 
-def prepare(source: Path, target: Path, lr_size: int, scale_factor: int, jobs: int):
+@click.command()
+@click.option("--source", required=True, type=Path)
+@click.option("--target", required=True, type=Path)
+@click.option("--lr-size", required=True, type=int)
+@click.option("--scale-factor", required=True, type=int)
+@click.option("--test-ratio", required=True, type=float)
+@click.option("--jobs", required=True, type=int, default=cpu_count())
+def cli(
+    source: Path,
+    target: Path,
+    lr_size: int,
+    scale_factor: int,
+    test_ratio: float,
+    jobs: int,
+):
     target.mkdir(exist_ok=True, parents=True)
 
     files = []
     files += source.rglob("*.png")
     files += source.rglob("*.jpg")
 
-    train, test = train_test_split(files, test_size=0.2)
+    train, test = train_test_split(files, test_size=test_ratio)
 
     convert(test, target / "test", lr_size, scale_factor, 3, jobs)
     convert(train, target / "train", lr_size, scale_factor, 3, jobs)
-
-
-@click.command()
-@click.option("--source", required=True, type=Path)
-@click.option("--target", required=True, type=Path)
-@click.option("--lr-size", required=True, type=int)
-@click.option("--scale-factor", required=True, type=int)
-@click.option("--jobs", required=True, type=int, default=cpu_count())
-def cli(source: Path, target: Path, lr_size: int, scale_factor: int, jobs: int):
-    return prepare(source, target, lr_size, scale_factor, jobs)
 
 
 if __name__ == "__main__":
