@@ -4,7 +4,7 @@ from functools import partial
 from multiprocessing import Pool
 from os import cpu_count
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import click
 import numpy as np
@@ -71,15 +71,15 @@ def convert(
 @click.option("--target", required=True, type=Path)
 @click.option("--lr-size", required=True, type=int)
 @click.option("--scale-factor", required=True, type=int)
-@click.option("--test-ratio", required=True, type=float)
 @click.option("--jobs", required=True, type=int, default=cpu_count())
+@click.option("--test-ratio", required=False, type=float, default=None)
 def cli(
     source: Path,
     target: Path,
     lr_size: int,
     scale_factor: int,
-    test_ratio: float,
     jobs: int,
+    test_ratio: Optional[float],
 ):
     target.mkdir(exist_ok=True, parents=True)
 
@@ -87,9 +87,12 @@ def cli(
     files += source.rglob("*.png")
     files += source.rglob("*.jpg")
 
-    train, test = train_test_split(files, test_size=test_ratio)
+    if test_ratio:
+        train, test = train_test_split(files, test_size=test_ratio)
+        convert(test, target / "test", lr_size, scale_factor, 3, jobs)
+    else:
+        train = files
 
-    convert(test, target / "test", lr_size, scale_factor, 3, jobs)
     convert(train, target / "train", lr_size, scale_factor, 3, jobs)
 
 
