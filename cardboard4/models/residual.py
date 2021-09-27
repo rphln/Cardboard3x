@@ -1,5 +1,5 @@
 from torch import Tensor
-from torch.nn import Conv2d, InstanceNorm2d, Module, PixelShuffle, Sequential, SiLU
+from torch.nn import Conv2d, InstanceNorm2d, Module, PixelShuffle, PReLU, Sequential
 from torch.nn.init import calculate_gain, xavier_uniform_, zeros_
 from torchvision.transforms import Normalize
 
@@ -17,7 +17,7 @@ class ResidualBlock(Module):
         self.inner = Sequential(
             Conv2d(outer_features, inner_features, kernel_size=3, padding=1),
             InstanceNorm2d(inner_features),
-            SiLU(),
+            PReLU(),
             Conv2d(inner_features, outer_features, kernel_size=3, padding=1),
             InstanceNorm2d(outer_features),
         )
@@ -47,7 +47,7 @@ class ResidualNetwork(Module):
 
         self.root = Sequential(
             Conv2d(channels, outer_features, kernel_size=3, padding=1),
-            SiLU(),
+            PReLU(),
         )
 
         self.stem = Sequential(
