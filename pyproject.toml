@@ -9,13 +9,15 @@ license = "MIT"
 profile = "black"
 
 [tool.poetry.dependencies]
-python = "^3.7"
-kornia = "*"
+python = ">=3.7.1"
+kornia = "0.5.11"
 scikit-learn = "*"
 torch = "*"
 torchvision = "*"
 wandb = "*"
 pytorch-ignite = "*"
+torchsummary = "^1.5.1"
+piqa = "^1.1.7"
 
 [tool.poetry.dev-dependencies]
 autoflake = {version = "*", allow-prereleases = true}
