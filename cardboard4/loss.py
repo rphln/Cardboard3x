@@ -25,12 +25,12 @@ class MultiScaleSSIM(Module):
     def forward(self, x: Tensor, y: Tensor) -> Tensor:
         css = []
 
-        for index, kernel in enumerate(self.kernels):
-            ss, cs = ssim(x, y, kernel)
+        for index, kernel in enumerate(reversed(self.kernels)):
+            ss, cs = ssim(x, y, kernel, channel_avg=False)
 
             if index == 0:
-                css.append(ss)
+                css.append(torch.relu(ss))
             else:
-                css.append(cs)
+                css.append(torch.relu(cs))
 
         return torch.stack(css, dim=-1).prod(dim=-1).mean(dim=-1)
