@@ -1,0 +1,73 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+from torch import device
+from torch.nn import Linear, Module
+from torchvision.datasets.folder import default_loader
+from torchvision.transforms.functional import normalize, resize, to_tensor
+from tqdm import tqdm
+
+LABELS = [
+    "media_3d_graphics",
+    "media_comic",
+    "media_graphite",
+    "media_oilpaint",
+    "media_pen_ink",
+    "media_vectorart",
+    "media_watercolor",
+]
+
+
+@torch.no_grad()
+def upscale(device: device, model: Module, source: Path, target: Path):
+    model = model.to(device)
+    model.eval()
+
+    for file in tqdm(source.glob("*")):
+        if not file.is_file():
+            continue
+
+        x = default_loader(file)
+
+        x = resize(x, size=(224, 224))
+        x = to_tensor(x)
+        x = normalize(x, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+        z = model(x.unsqueeze_(0))
+        z = torch.argmax(z, dim=1).squeeze()
+
+        label = LABELS[z]
+
+        parent = target / label
+        parent.mkdir(parents=True, exist_ok=True)
+
+        (parent / file.name).symlink_to(file)
+
+
+@click.command()
+@click.option("--device", default="cpu", type=torch.device)
+@click.argument("source", type=Path)
+@click.argument("target", type=Path)
+def cli(device, source, target):
+    model = torch.hub.load("RF5/danbooru-pretrained", "resnet50")
+    model.eval()
+
+    for param in model.parameters():
+        param.requires_grad = False
+
+    head = Linear(512, 7)
+    head.requires_grad = True
+
+    model[-1][-1] = head
+
+    checkpoint = torch.load("49.pth")
+    model.load_state_dict(checkpoint["model_state_dict"])
+
+    return upscale(device, model, source, target)
+
+
+if __name__ == "__main__":
+    cli()

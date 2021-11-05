@@ -1,0 +1,72 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+from torch.nn import Conv2d, PixelShuffle, Sequential, Tanh
+from torchvision.datasets.folder import default_loader
+from torchvision.transforms import Normalize
+from torchvision.transforms.functional import to_tensor
+from torchvision.utils import save_image
+
+
+class ESPCN(Sequential):
+    SCALE = 3
+    N0 = 3
+
+    F1 = 5
+    N1 = 64
+
+    F2 = 3
+    N2 = 32
+
+    F3 = 3
+    N3 = N0 * (SCALE ** 2)
+
+    def __init__(self):
+        super().__init__()
+
+        self.normalize = Normalize(
+            std=[0.229, 0.224, 0.225], mean=[0.485, 0.456, 0.406]
+        )
+
+        self.stem = Sequential(
+            Conv2d(self.N0, self.N1, self.F1, padding="same"),
+            Tanh(),
+            Conv2d(self.N1, self.N2, self.F2, padding="same"),
+            Tanh(),
+        )
+        self.head = Sequential(
+            Conv2d(self.N2, self.N3, self.F3, padding="same"),
+            PixelShuffle(self.SCALE),
+        )
+
+
+@torch.no_grad()
+def upscale(device, model, source, target):
+    model = model.to(device)
+    model.eval()
+
+    lr = to_tensor(default_loader(source)).unsqueeze_(0)
+    hr = model(lr.to(device)).clamp(0.0, 1.0)
+
+    save_image(hr, target, format="png")
+
+
+@click.command()
+@click.option("--device", default="cuda:0", type=torch.device)
+@click.option("--state", required=True, type=Path)
+@click.argument("source", type=Path)
+@click.argument("target", type=Path)
+def cli(device, state, source, target):
+    state = torch.load(state)
+
+    model = ESPCN()
+    model.load_state_dict(state["model"])
+
+    return upscale(device, model, source, target)
+
+
+if __name__ == "__main__":
+    cli()

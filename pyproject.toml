@@ -16,8 +16,8 @@ torch = "*"
 torchvision = "*"
 wandb = "*"
 pytorch-ignite = "*"
-torchsummary = "^1.5.1"
 piqa = "^1.1.7"
+torchinfo = "^1.5.3"
 
 [tool.poetry.dev-dependencies]
 autoflake = {version = "*", allow-prereleases = true}

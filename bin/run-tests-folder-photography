@@ -4,40 +4,44 @@ from pathlib import Path
 
 import click
 import torch
-import torch.nn as nn
-from kornia.color import rgb_to_ycbcr, ycbcr_to_rgb
-from torch.cuda import amp
-from torch.nn.functional import interpolate
+from torch.nn import Conv2d, PixelShuffle, Sequential, Tanh
 from torch.utils.data import DataLoader
+from torchvision.transforms import Normalize
 from tqdm import tqdm
 
 from cardboard4 import FilePairsDataset, mean_psnr, mean_ssim
 
 
-class ESPCN(nn.Module):
-    def __init__(self, scale_factor):
-        super(ESPCN, self).__init__()
+class ESPCN(Sequential):
+    SCALE = 3
+    N0 = 3
 
-        # Feature mapping
-        self.feature_maps = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=5, stride=1, padding=2),
-            nn.Tanh(),
-            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
-            nn.Tanh(),
+    F1 = 5
+    N1 = 64
+
+    F2 = 3
+    N2 = 32
+
+    F3 = 3
+    N3 = N0 * (SCALE ** 2)
+
+    def __init__(self):
+        super().__init__()
+
+        self.normalize = Normalize(
+            std=[0.229, 0.224, 0.225], mean=[0.485, 0.456, 0.406]
         )
 
-        # Sub-pixel convolution layer
-        self.sub_pixel = nn.Sequential(
-            nn.Conv2d(32, 1 * (scale_factor ** 2), kernel_size=3, stride=1, padding=1),
-            nn.PixelShuffle(scale_factor),
-            nn.Sigmoid(),
+        self.stem = Sequential(
+            Conv2d(self.N0, self.N1, self.F1, padding="same"),
+            Tanh(),
+            Conv2d(self.N1, self.N2, self.F2, padding="same"),
+            Tanh(),
         )
-
-    @amp.autocast()
-    def forward(self, inputs):
-        out = self.feature_maps(inputs)
-        out = self.sub_pixel(out)
-        return out
+        self.head = Sequential(
+            Conv2d(self.N2, self.N3, self.F3, padding="same"),
+            PixelShuffle(self.SCALE),
+        )
 
 
 @torch.no_grad()
@@ -53,13 +57,7 @@ def forward(model, device, dataset, batch_size):
         x = x.to(device)
         y = y.to(device)
 
-        x = rgb_to_ycbcr(x)
-
-        z = interpolate(x, scale_factor=3, mode="bicubic", align_corners=False)
-        z[:, :1, :, :] = model(x[:, :1, :, :])
-        z = z.clamp(0.0, 1.0)
-
-        z = ycbcr_to_rgb(z)
+        z = model(x).clamp(0.0, 1.0)
 
         epoch_mean_psnr += (mean_psnr(z, y).item() - epoch_mean_psnr) / batch
         epoch_mean_ssim += (mean_ssim(z, y).item() - epoch_mean_ssim) / batch
@@ -75,8 +73,8 @@ def forward(model, device, dataset, batch_size):
 def cli(device, models, dataset, batch_size):
     state = torch.load(models)
 
-    model = ESPCN(3).to(device)
-    model.load_state_dict(state)
+    model = ESPCN().to(device)
+    model.load_state_dict(state["model"])
 
     psnr, ssim = forward(model, device, FilePairsDataset(dataset), batch_size)
     print(dataset, models, f"{psnr:.2f} {ssim:.4f}")

@@ -1,0 +1,40 @@
+#!/usr/bin/env -S poetry run python3
+
+from pathlib import Path
+
+import click
+import torch
+from torchvision.datasets.folder import default_loader
+from torchvision.transforms.functional import to_tensor
+from torchvision.utils import save_image
+
+from cardboard4.models import ResidualNetwork
+
+
+@torch.no_grad()
+def upscale(device, model, source, target):
+    model = model.to(device)
+    model.eval()
+
+    lr = to_tensor(default_loader(source)).unsqueeze_(0)
+    hr = model(lr.to(device)).clamp(0.0, 1.0)
+
+    save_image(hr, target, format="png")
+
+
+@click.command()
+@click.option("--device", default="cpu", type=torch.device)
+@click.option("--state", required=True, type=Path)
+@click.argument("source", type=Path)
+@click.argument("target", type=Path)
+def cli(device, state, source, target):
+    state = torch.load(state)
+
+    model = ResidualNetwork()
+    model.load_state_dict(state["model"])
+
+    return upscale(device, model, source, target)
+
+
+if __name__ == "__main__":
+    cli()
